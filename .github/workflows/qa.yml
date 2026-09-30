@@ -1,0 +1,72 @@
+name: QA Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: catalogue
+          POSTGRES_PASSWORD: catalogue
+          POSTGRES_DB: catalogue
+        ports:
+          - 5544:5432
+        options: >-
+          --health-cmd "pg_isready -U catalogue -d catalogue"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://catalogue:catalogue@localhost:5544/catalogue
+      AUTH_SECRET: test-secret-for-ci
+      NEXTAUTH_SECRET: test-secret-for-ci
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Apply database migrations
+        run: npm run db:deploy
+
+      - name: Seed database
+        run: npm run db:seed
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Vitest - blocking tests
+        run: npx vitest run --exclude "tests/assessment-1/**"
+
+      - name: Run known bug reproduction tests
+        continue-on-error: true
+        run: >
+          npx vitest run
+          tests/assessment-1/catalogue-expiry.test.ts
+          tests/assessment-1/catalogue-authorization.test.ts
+
+      - name: Run Playwright
+        run: npm run test:e2e
